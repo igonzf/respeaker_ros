@@ -1,5 +1,6 @@
 from .util import ignore_stderr
 import pyaudio
+import time
 import numpy as np
 
 
@@ -14,6 +15,8 @@ class RespeakerAudio(object):
         self.rate = 16000
         self.bitwidth = 2
         self.bitdepth = 16
+        self.min_interval = 0.3
+        self.last_call_time = 0
 
         # find device
         count = self.pyaudio.get_device_count()
@@ -51,7 +54,7 @@ class RespeakerAudio(object):
             format=pyaudio.paInt16,
             channels=self.available_channels,
             rate=self.rate,
-            frames_per_buffer=1024,
+            frames_per_buffer=16000,
             stream_callback=self.stream_callback,
             input_device_index=self.device_index,
         )
@@ -71,6 +74,10 @@ class RespeakerAudio(object):
 
     def stream_callback(self, in_data, frame_count, time_info, status):
         # split channel
+        current_time = time.time()
+        if current_time - self.last_call_time < self.min_interval:
+            return None, pyaudio.paContinue  # No llamar a on_audio aún
+        self.last_call_time = current_time
         data = np.fromstring(in_data, dtype=np.int16)
         chunk_per_channel = len(data) // self.available_channels
         data = np.reshape(data, (chunk_per_channel, self.available_channels))

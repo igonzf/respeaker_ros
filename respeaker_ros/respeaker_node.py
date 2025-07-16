@@ -20,6 +20,9 @@ import math
 import numpy as np
 import angles
 import tf_transformations as T
+import ffmpeg
+import wave
+import os
 
 
 class RespeakerNode(Node):
@@ -61,22 +64,37 @@ class RespeakerNode(Node):
  
         self.timer_led = None
         self.sub_led = self.create_subscription(ColorRGBA, "status_led", self.on_status_led, 1)
+        self.audio_buffer = []
+        self.count_chunk=0
 
     def on_audio(self, data, channel):
         as_uint8 = data.astype(np.uint8)
+        as_int16 = data.astype(np.int16)
         channel_pub = self._pub_audio_channels[channel]
+        # if self.count_chunk<=4:
+        #     self.audio_buffer.append(as_uint8)
+        #     self.count_chunk = self.count_chunk+1
+        # else:
+        # print(f'LEN DEL BUFFER {len(self.audio_buffer)}')
+        # audio_data = np.hstack(self.audio_buffer)
+        # print(f'SHAPE DEL ARRAY {audio_data.shape}')
+        # new_size = (audio_data.shape[0] // 250) * 250
+        # audio_data = audio_data[:new_size]  # Recortar si es necesario
+
+        #print(f'Shape ajustada del array: {audio_data.shape}')
         if channel_pub.get_subscription_count() > 0:
-            channel_pub.publish(AudioData(data=as_uint8))
+            channel_pub.publish(AudioData(int16_data=as_int16))
         if channel == self.main_channel.value:
             if self._pub_audio.get_subscription_count() > 0:
-                self._pub_audio.publish(AudioData(data=as_uint8))
+                self._pub_audio.publish(AudioData(int16_data=as_int16))
+                    
             if self.is_speaking:
                 if len(self.speech_audio_buffer) == 0:
                     self.speech_audio_buffer = [self.speech_prefetch_buffer]
-                self.speech_audio_buffer.append(as_uint8)
+                self.speech_audio_buffer.append(as_int16)
             else:
                 self.speech_prefetch_buffer = np.roll(self.speech_prefetch_buffer, -len(as_uint8))
-                self.speech_prefetch_buffer[-len(as_uint8):] = as_uint8
+                self.speech_prefetch_buffer[-len(as_uint8):] = as_int16
 
     def on_timer(self):
         stamp = self.get_clock().now()
@@ -125,7 +143,7 @@ class RespeakerNode(Node):
             print("Speech detected for %.3f seconds" % duration)
             if self.speech_min_duration.value <= duration < self.speech_max_duration.value:
                 if self._pub_speech_audio.get_subscription_count() > 0:
-                    self._pub_speech_audio.publish(AudioData(data=buffered_speech))
+                    self._pub_speech_audio.publish(AudioData(int16_data=buffered_speech))
 
     def on_status_led(self, msg):
         self.respeaker.set_led_color(r=msg.r, g=msg.g, b=msg.b, a=msg.a)
@@ -134,6 +152,23 @@ class RespeakerNode(Node):
         self.timer_led = rclpy.timer.Timer(rclpy.duration.Duration(3.0),
                                      lambda e: self.respeaker.set_led_trace(),
                                      oneshot=True)
+        
+
+    def save_audio_to_wav(self, audio_data, filename):
+        """ Guarda los datos de audio en formato WAV correcto. """
+        if not audio_data:
+            print("No hay datos de audio para guardar.")
+            return
+
+        # Convertir la lista de arrays en un solo array numpy
+        audio_data = np.hstack(audio_data).astype(np.int16)
+
+        with wave.open(filename, 'w') as wf:
+            wf.setnchannels(1)  # Mono (un solo canal)
+            wf.setsampwidth(2)  # 16 bits = 2 bytes por muestra
+            wf.setframerate(16000)  # Frecuencia de muestreo 16 kHz
+            wf.writeframes(audio_data.tobytes())  # Convertir a bytes y escribir
+        print(f"Audio guardado en {filename}")
 
 
 def main(args=None):
